@@ -22,7 +22,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.emjaycruz.coaf.audio.AudioRecorder
 import com.emjaycruz.coaf.audio.StudioController
 import com.emjaycruz.coaf.model.StudioProject
 import com.emjaycruz.coaf.model.StudioTrack
@@ -35,234 +34,252 @@ private val Green = Color(0xFF55E6A5)
 private val White = Color(0xFFF7F4FF)
 
 class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
 
-override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
+        window.statusBarColor = android.graphics.Color.rgb(16, 16, 20)
+        window.navigationBarColor = android.graphics.Color.rgb(16, 16, 20)
 
-    window.statusBarColor = android.graphics.Color.rgb(16, 16, 20)
-    window.navigationBarColor = android.graphics.Color.rgb(16, 16, 20)
-
-    setContent {
-        MaterialTheme(
-            colorScheme = darkColorScheme(
-                primary = Purple,
-                secondary = Green,
-                background = Background,
-                surface = Panel
-            )
-        ) {
-            CoafApp()
+        setContent {
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = Purple,
+                    secondary = Green,
+                    background = Background,
+                    surface = Panel
+                )
+            ) {
+                CoafApp()
+            }
         }
     }
 }
 
-}
-
 @Composable
 private fun CoafApp() {
-val context = androidx.compose.ui.platform.LocalContext.current
-val controller = remember {
-StudioController(context.applicationContext)
-}
+    val context = androidx.compose.ui.platform.LocalContext.current
 
-var projects by remember { mutableStateOf(emptyList<StudioProject>()) }
-var currentProject by remember { mutableStateOf<StudioProject?>(null) }
-var refresh by remember { mutableIntStateOf(0) }
-
-var showCreateDialog by remember { mutableStateOf(false) }
-var newProjectName by remember { mutableStateOf("") }
-
-var recordingTrackId by remember { mutableStateOf<String?>(null) }
-var recordingPaused by remember { mutableStateOf(false) }
-var playbackActive by remember { mutableStateOf(false) }
-
-var pendingTrackId by remember { mutableStateOf<String?>(null) }
-
-fun reload() {
-    projects = controller.getSavedProjects()
-    currentProject = controller.currentProject
-    refresh++
-}
-
-fun reportError(error: Exception) {
-    Toast.makeText(
-        context,
-        error.message ?: "Something went wrong",
-        Toast.LENGTH_LONG
-    ).show()
-}
-
-fun startRecording(trackId: String) {
-    try {
-        controller.startRecording(trackId)
-        recordingTrackId = trackId
-        recordingPaused = false
-        reload()
-        Toast.makeText(
-            context,
-            "Recording started",
-            Toast.LENGTH_SHORT
-        ).show()
-    } catch (error: Exception) {
-        reportError(error)
+    val controller = remember {
+        StudioController(context.applicationContext)
     }
-}
 
-val microphonePermission = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.RequestPermission()
-) { granted ->
-    val trackId = pendingTrackId
-    pendingTrackId = null
+    var projects by remember {
+        mutableStateOf(emptyList<StudioProject>())
+    }
 
-    if (granted && trackId != null) {
-        startRecording(trackId)
-    } else {
+    var currentProject by remember {
+        mutableStateOf<StudioProject?>(null)
+    }
+
+    var showCreateDialog by remember {
+        mutableStateOf(false)
+    }
+
+    var newProjectName by remember {
+        mutableStateOf("")
+    }
+
+    var recordingTrackId by remember {
+        mutableStateOf<String?>(null)
+    }
+
+    var recordingPaused by remember {
+        mutableStateOf(false)
+    }
+
+    var playbackActive by remember {
+        mutableStateOf(false)
+    }
+
+    var pendingTrackId by remember {
+        mutableStateOf<String?>(null)
+    }
+
+    var refresh by remember {
+        mutableIntStateOf(0)
+    }
+
+    fun reload() {
+        projects = controller.getSavedProjects()
+        currentProject = controller.currentProject
+        refresh++
+    }
+
+    fun reportError(error: Exception) {
         Toast.makeText(
             context,
-            "Microphone permission is required to record.",
+            error.message ?: "Something went wrong",
             Toast.LENGTH_LONG
         ).show()
     }
-}
 
-fun requestRecording(trackId: String) {
-    val granted = ContextCompat.checkSelfPermission(
-        context,
-        Manifest.permission.RECORD_AUDIO
-    ) == PackageManager.PERMISSION_GRANTED
+    fun startRecording(trackId: String) {
+        try {
+            controller.startRecording(trackId)
+            recordingTrackId = trackId
+            recordingPaused = false
+            reload()
 
-    if (granted) {
-        startRecording(trackId)
-    } else {
-        pendingTrackId = trackId
-        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            Toast.makeText(
+                context,
+                "Recording started",
+                Toast.LENGTH_SHORT
+            ).show()
+        } catch (error: Exception) {
+            reportError(error)
+        }
     }
-}
 
-Surface(
-    modifier = Modifier.fillMaxSize(),
-    color = Background
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+    val microphonePermission =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            val trackId = pendingTrackId
+            pendingTrackId = null
+
+            if (granted && trackId != null) {
+                startRecording(trackId)
+            } else {
+                Toast.makeText(
+                    context,
+                    "Microphone permission is required to record.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+    fun requestRecording(trackId: String) {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (granted) {
+            startRecording(trackId)
+        } else {
+            pendingTrackId = trackId
+            microphonePermission.launch(
+                Manifest.permission.RECORD_AUDIO
+            )
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = Background
     ) {
-        Text(
-            text = "COAF STUDIO",
-            color = Purple,
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Black
-        )
-
-        Text(
-            text = "KING OF ALL FLAVORS",
-            color = Green,
-            fontSize = 11.sp,
-            letterSpacing = 3.sp
-        )
-
-        Spacer(Modifier.height(18.dp))
-
-        if (currentProject == null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
             Text(
-                text = "MY PROJECTS",
-                color = White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
+                text = "COAF STUDIO",
+                color = Purple,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Black
             )
 
-            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "KING OF ALL FLAVORS",
+                color = Green,
+                fontSize = 11.sp,
+                letterSpacing = 3.sp
+            )
 
-            Button(
-                onClick = {
-                    newProjectName = ""
-                    showCreateDialog = true
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("+ Create New Project")
-            }
+            Spacer(Modifier.height(18.dp))
 
-            Spacer(Modifier.height(12.dp))
-
-            if (projects.isEmpty()) {
+            if (currentProject == null) {
                 Text(
-                    text = "Your music projects will appear here.",
-                    color = Color.LightGray
+                    text = "MY PROJECTS",
+                    color = White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
                 )
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+
+                Spacer(Modifier.height(12.dp))
+
+                Button(
+                    onClick = {
+                        newProjectName = ""
+                        showCreateDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(projects, key = { it.id }) { project ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    Panel,
-                                    RoundedCornerShape(14.dp)
-                                )
-                                .padding(14.dp)
-                        ) {
-                            Text(
-                                project.name,
-                                color = White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 17.sp
-                            )
+                    Text("+ Create New Project")
+                }
 
-                            Text(
-                                "${project.tracks.size} tracks",
-                                color = Color.LightGray,
-                                fontSize = 13.sp
-                            )
+                Spacer(Modifier.height(12.dp))
 
-                            Spacer(Modifier.height(8.dp))
-
-                            Button(
-                                onClick = {
-                                    try {
-                                        currentProject =
-                                            controller.openProject(project.id)
-                                        reload()
-                                    } catch (error: Exception) {
-                                        reportError(error)
-                                    }
-                                }
+                if (projects.isEmpty()) {
+                    Text(
+                        text = "Your music projects will appear here.",
+                        color = Color.LightGray
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement =
+                            Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(
+                            projects,
+                            key = { it.id }
+                        ) { project ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        Panel,
+                                        RoundedCornerShape(14.dp)
+                                    )
+                                    .padding(14.dp)
                             ) {
-                                Text("Open Studio")
+                                Text(
+                                    project.name,
+                                    color = White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 17.sp
+                                )
+
+                                Text(
+                                    "${project.tracks.size} tracks",
+                                    color = Color.LightGray,
+                                    fontSize = 13.sp
+                                )
+
+                                Spacer(Modifier.height(8.dp))
+
+                                Button(
+                                    onClick = {
+                                        try {
+                                            controller.openProject(
+                                                project.id
+                                            )
+                                            reload()
+                                        } catch (error: Exception) {
+                                            reportError(error)
+                                        }
+                                    }
+                                ) {
+                                    Text("Open Studio")
+                                }
                             }
                         }
                     }
                 }
-            }
-        } else {
-            val project = currentProject!!
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        project.name,
-                        color = White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Text(
-                        "MULTITRACK STUDIO",
-                        color = Green,
-                        fontSize = 11.sp
-                    )
-                }
-
-                TextButton(
-                    onClick = {
-                        if (recordingTrackId == null && !playbackActive) {
+            } else {
+                StudioScreen(
+                    project = currentProject!!,
+                    controller = controller,
+                    recordingTrackId = recordingTrackId,
+                    recordingPaused = recordingPaused,
+                    playbackActive = playbackActive,
+                    onBack = {
+                        if (
+                            recordingTrackId == null &&
+                            !playbackActive
+                        ) {
                             currentProject = null
                             reload()
                         } else {
@@ -272,122 +289,55 @@ Surface(
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
-                    }
-                ) {
-                    Text("Projects")
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = {
+                    },
+                    onAddTrack = { name, type ->
                         try {
-                            controller.addTrack(
-                                "Vocal ${project.tracks.count { it.type == TrackType.VOCAL } + 1}",
-                                TrackType.VOCAL
-                            )
+                            controller.addTrack(name, type)
                             reload()
                         } catch (error: Exception) {
                             reportError(error)
                         }
                     },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("+ Vocal")
-                }
-
-                Button(
-                    onClick = {
+                    onRecord = { trackId ->
+                        requestRecording(trackId)
+                    },
+                    onPauseResume = {
                         try {
-                            controller.addTrack(
-                                "Voice Over",
-                                TrackType.VOICE_OVER
-                            )
-                            reload()
+                            if (recordingPaused) {
+                                controller.resumeRecording()
+                            } else {
+                                controller.pauseRecording()
+                            }
+                            recordingPaused = !recordingPaused
                         } catch (error: Exception) {
                             reportError(error)
                         }
                     },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("+ Voice-over")
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = {
+                    onStopRecording = {
                         try {
-                            controller.addTrack(
-                                "Backing Vocal",
-                                TrackType.BACKING_VOCAL
-                            )
+                            val take = controller.stopRecording()
+                            recordingTrackId = null
+                            recordingPaused = false
                             reload()
-                        } catch (error: Exception) {
-                            reportError(error)
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("+ Backing")
-                }
 
-                Button(
-                    onClick = {
-                        try {
-                            controller.addTrack(
-                                "Ad-lib",
-                                TrackType.AD_LIB
-                            )
-                            reload()
-                        } catch (error: Exception) {
-                            reportError(error)
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("+ Ad-lib")
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = {
-                        try {
-                            controller.playProject()
-                            playbackActive = true
                             Toast.makeText(
                                 context,
-                                "Playback started",
+                                "Saved ${take.name}",
                                 Toast.LENGTH_SHORT
                             ).show()
                         } catch (error: Exception) {
                             reportError(error)
                         }
                     },
-                    enabled = !playbackActive && recordingTrackId == null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("▶ Play")
-                }
-
-                Button(
-                    onClick = {
+                    onPlay = {
+                        try {
+                            controller.playProject()
+                            playbackActive = true
+                        } catch (error: Exception) {
+                            reportError(error)
+                        }
+                    },
+                    onStopPlayback = {
                         try {
                             controller.stopPlayback()
                             playbackActive = false
@@ -395,224 +345,477 @@ Surface(
                             reportError(error)
                         }
                     },
-                    enabled = playbackActive,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("■ Stop")
-                }
-            }
-
-            if (recordingTrackId != null) {
-                Spacer(Modifier.height(8.dp))
-
-                Text(
-                    if (recordingPaused) "RECORDING PAUSED" else "● RECORDING",
-                    color = if (recordingPaused) Green else Color.Red,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            try {
-                                if (recordingPaused) {
-                                    controller.resumeRecording()
-                                } else {
-                                    controller.pauseRecording()
-                                }
-                                recordingPaused = !recordingPaused
-                            } catch (error: Exception) {
-                                reportError(error)
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(if (recordingPaused) "Resume" else "Pause")
-                    }
-
-                    Button(
-                        onClick = {
-                            try {
-                                val take = controller.stopRecording()
-                                recordingTrackId = null
-                                recordingPaused = false
-                                reload()
-
-                                Toast.makeText(
-                                    context,
-                                    "Saved ${take.name}",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            } catch (error: Exception) {
-                                reportError(error)
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Stop & Save Take")
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Text(
-                "TRACKS  •  ${project.tracks.size}",
-                color = Green,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            if (project.tracks.isEmpty()) {
-                Text(
-                    "Add a track to start recording.",
-                    color = Color.LightGray
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(project.tracks, key = { it.id }) { track ->
-                        TrackCard(
-                            track = track,
-                            isRecording = recordingTrackId == track.id,
-                            recordingExists = recordingTrackId != null,
-                            playbackActive = playbackActive,
-                            onRecord = {
-                                requestRecording(track.id)
-                            },
-                            onMute = {
-                                try {
-                                    controller.setMute(track.id, !track.isMuted)
-                                    reload()
-                                } catch (error: Exception) {
-                                    reportError(error)
-                                }
-                            },
-                            onSolo = {
-                                try {
-                                    controller.setSolo(track.id, !track.isSolo)
-                                    reload()
-                                } catch (error: Exception) {
-                                    reportError(error)
-                                }
-                            },
-                            onVolume = { value ->
-                                controller.setVolume(track.id, value)
-                                reload()
-                            }
-                        )
-                    }
-                }
-            }
-
-            Text(
-                "Built for MJ Cruz",
-                color = Color.Gray,
-                fontSize = 12.sp,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
-        }
-    }
-}
-
-if (showCreateDialog) {
-    AlertDialog(
-        onDismissRequest = { showCreateDialog = false },
-        title = { Text("New Project") },
-        text = {
-            OutlinedTextField(
-                value = newProjectName,
-                onValueChange = { newProjectName = it },
-                label = { Text("Project name") },
-                singleLine = true
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    if (newProjectName.isNotBlank()) {
+                    onMute = { track ->
                         try {
-                            currentProject = controller.createProject(
-                                newProjectName.trim()
+                            controller.setMute(
+                                track.id,
+                                !track.isMuted
                             )
-                            showCreateDialog = false
+                            reload()
+                        } catch (error: Exception) {
+                            reportError(error)
+                        }
+                    },
+                    onSolo = { track ->
+                        try {
+                            controller.setSolo(
+                                track.id,
+                                !track.isSolo
+                            )
+                            reload()
+                        } catch (error: Exception) {
+                            reportError(error)
+                        }
+                    },
+                    onVolume = { track, value ->
+                        try {
+                            controller.setVolume(track.id, value)
                             reload()
                         } catch (error: Exception) {
                             reportError(error)
                         }
                     }
-                }
-            ) {
-                Text("Create")
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = { showCreateDialog = false }
-            ) {
-                Text("Cancel")
+                )
             }
         }
-    )
+    }
+
+    if (showCreateDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showCreateDialog = false
+            },
+            title = {
+                Text("New Project")
+            },
+            text = {
+                OutlinedTextField(
+                    value = newProjectName,
+                    onValueChange = {
+                        newProjectName = it
+                    },
+                    label = {
+                        Text("Project name")
+                    },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (newProjectName.isNotBlank()) {
+                            try {
+                                controller.createProject(
+                                    newProjectName.trim()
+                                )
+                                showCreateDialog = false
+                                reload()
+                            } catch (error: Exception) {
+                                reportError(error)
+                            }
+                        }
+                    }
+                ) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showCreateDialog = false
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    @Suppress("UNUSED_EXPRESSION")
+    refresh
 }
+@Composable
+private fun StudioScreen(
+    project: StudioProject,
+    controller: StudioController,
+    recordingTrackId: String?,
+    recordingPaused: Boolean,
+    playbackActive: Boolean,
+    onBack: () -> Unit,
+    onAddTrack: (String, TrackType) -> Unit,
+    onRecord: (String) -> Unit,
+    onPauseResume: () -> Unit,
+    onStopRecording: () -> Unit,
+    onPlay: () -> Unit,
+    onStopPlayback: () -> Unit,
+    onMute: (StudioTrack) -> Unit,
+    onSolo: (StudioTrack) -> Unit,
+    onVolume: (StudioTrack, Float) -> Unit
+) {
+    var selectedTrackType by remember {
+        mutableStateOf(TrackType.VOCAL)
+    }
 
-// Keep the local state tied to explicit reloads.
-@Suppress("UNUSED_EXPRESSION")
-refresh
+    var customTrackName by remember {
+        mutableStateOf("")
+    }
 
+    Column(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) {
+                Text("← Projects")
+            }
+
+            Spacer(Modifier.width(8.dp))
+
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    project.name,
+                    color = White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    "${project.tracks.size} tracks",
+                    color = Color.LightGray,
+                    fontSize = 12.sp
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            "TRACK CONTROLS",
+            color = Green,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = onPlay,
+                enabled = !playbackActive &&
+                    recordingTrackId == null,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("▶ Play")
+            }
+
+            Button(
+                onClick = onStopPlayback,
+                enabled = playbackActive,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("■ Stop")
+            }
+        }
+
+        if (recordingTrackId != null) {
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Panel,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        if (recordingPaused) {
+                            "Recording paused"
+                        } else {
+                            "● Recording"
+                        },
+                        color = if (recordingPaused) {
+                            Color.Yellow
+                        } else {
+                            Green
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        "Stop to save this take",
+                        color = Color.LightGray,
+                        fontSize = 11.sp
+                    )
+                }
+
+                Button(onClick = onPauseResume) {
+                    Text(
+                        if (recordingPaused) "Resume"
+                        else "Pause"
+                    )
+                }
+
+                Button(onClick = onStopRecording) {
+                    Text("Save")
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Text(
+            "ADD A TRACK",
+            color = Green,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        var menuExpanded by remember {
+            mutableStateOf(false)
+        }
+
+        Box {
+            OutlinedButton(
+                onClick = {
+                    menuExpanded = true
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Track type: ${selectedTrackType.name}")
+            }
+
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = {
+                    menuExpanded = false
+                }
+            ) {
+                TrackType.values().forEach { type ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(type.name.replace("_", " "))
+                        },
+                        onClick = {
+                            selectedTrackType = type
+                            menuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = customTrackName,
+            onValueChange = {
+                customTrackName = it
+            },
+            label = {
+                Text("Track name")
+            },
+            placeholder = {
+                Text("e.g. Main vocals")
+            },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            onClick = {
+                val name = customTrackName.trim()
+                    .ifBlank {
+                        selectedTrackType.name
+                            .replace("_", " ")
+                    }
+
+                onAddTrack(name, selectedTrackType)
+                customTrackName = ""
+            },
+            enabled = recordingTrackId == null &&
+                !playbackActive,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("+ Add Track")
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Text(
+            "YOUR TRACKS",
+            color = Green,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        if (project.tracks.isEmpty()) {
+            Text(
+                "No tracks yet. Add a track to start recording.",
+                color = Color.LightGray,
+                fontSize = 13.sp
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(
+                    items = project.tracks,
+                    key = { it.id }
+                ) { track ->
+                    TrackCard(
+                        track = track,
+                        recording = recordingTrackId == track.id,
+                        recordingPaused = recordingPaused,
+                        canRecord = recordingTrackId == null &&
+                            !playbackActive,
+                        onRecord = {
+                            onRecord(track.id)
+                        },
+                        onMute = {
+                            onMute(track)
+                        },
+                        onSolo = {
+                            onSolo(track)
+                        },
+                        onVolume = { value ->
+                            onVolume(track, value)
+                        }
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
 private fun TrackCard(
-track: StudioTrack,
-isRecording: Boolean,
-recordingExists: Boolean,
-playbackActive: Boolean,
-onRecord: () -> Unit,
-onMute: () -> Unit,
-onSolo: () -> Unit,
-onVolume: (Float) -> Unit
+    track: StudioTrack,
+    recording: Boolean,
+    recordingPaused: Boolean,
+    canRecord: Boolean,
+    onRecord: () -> Unit,
+    onMute: () -> Unit,
+    onSolo: () -> Unit,
+    onVolume: (Float) -> Unit
 ) {
-var volume by remember(track.id, track.volume) {
-mutableFloatStateOf(track.volume)
-}
-
-Column(
-    modifier = Modifier
-        .fillMaxWidth()
-        .background(Panel, RoundedCornerShape(14.dp))
-        .padding(12.dp)
-) {
-    Text(
-        track.name,
-        color = White,
-        fontSize = 16.sp,
-        fontWeight = FontWeight.Bold
-    )
-
-    Text(
-        "${track.type.name.replace('_', ' ')} • ${track.recordings.size} takes",
-        color = Color.LightGray,
-        fontSize = 12.sp
-    )
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                Panel,
+                RoundedCornerShape(14.dp)
+            )
+            .padding(12.dp)
     ) {
-        FilterChip(
-            selected = track.isMuted,
-            onClick = onMute,
-            label = { Text(if (track.isMuted) "Muted" else "Mute") }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    track.name,
+                    color = White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    track.type.name.replace("_", " "),
+                    color = Color.LightGray,
+                    fontSize = 11.sp
+                )
+
+                Text(
+                    "${track.recordings.size} takes",
+                    color = Green,
+                    fontSize = 12.sp
+                )
+            }
+
+            Text(
+                if (recording) {
+                    if (recordingPaused) "PAUSED" else "REC"
+                } else {
+                    ""
+                },
+                color = if (recordingPaused) {
+                    Color.Yellow
+                } else {
+                    Green
+                },
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onMute,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    if (track.isMuted) "Unmute" else "Mute"
+                )
+            }
+
+            OutlinedButton(
+                onClick = onSolo,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    if (track.isSolo) "Unsolo" else "Solo"
+                )
+            }
+
+            Button(
+                onClick = onRecord,
+                enabled = canRecord && !recording,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("● Record")
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Text(
+            "Volume ${(track.volume * 100).toInt()}%",
+            color = Color.LightGray,
+            fontSize = 12.sp
         )
 
-        FilterChip(
-            selected = track.isSolo,
-            onClick = onSolo,
-            label = { Text(if (track.isSolo) "Solo ON" else "Solo")
+        Slider(
+            value = track.volume.coerceIn(0f, 1f),
+            onValueChange = onVolume,
+            valueRange = 0f..1f,
+            enabled = !recording && canRecord
+        )
+    }
+}

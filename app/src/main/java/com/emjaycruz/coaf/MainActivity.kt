@@ -111,14 +111,9 @@ private fun CoafApp() {
         mutableStateOf(false)
     }
 
-    var refresh by remember {
-        mutableIntStateOf(0)
-    }
-
     fun reload() {
         projects = controller.getSavedProjects()
         currentProject = controller.currentProject
-        refresh++
     }
 
     fun reportError(error: Exception) {
@@ -171,43 +166,45 @@ private fun CoafApp() {
             val trackId = pendingImportTrackId
             pendingImportTrackId = null
 
-if (uri != null && trackId != null) {
-    scope.launch {
-        importingAudio = true
+            if (uri != null && trackId != null) {
+                scope.launch {
+                    importingAudio = true
 
-        try {
-            Toast.makeText(
-                context,
-                "Starting audio import...",
-                Toast.LENGTH_SHORT
-            ).show()
+                    try {
+                        Toast.makeText(
+                            context,
+                            "Starting audio import...",
+                            Toast.LENGTH_SHORT
+                        ).show()
 
-            val importedTake = withContext(Dispatchers.IO) {
-                controller.importAudio(trackId, uri)
+                        val importedTake =
+                            withContext(Dispatchers.IO) {
+                                controller.importAudio(trackId, uri)
+                            }
+
+                        Toast.makeText(
+                            context,
+                            "Audio decoded and saved!",
+                            Toast.LENGTH_LONG
+                        ).show()
+
+                        reload()
+
+                        Toast.makeText(
+                            context,
+                            "Imported ${importedTake.name}",
+                            Toast.LENGTH_LONG
+                        ).show()
+
+                    } catch (error: Exception) {
+                        reportError(error)
+
+                    } finally {
+                        importingAudio = false
+                    }
+                }
             }
-
-            Toast.makeText(
-                context,
-                "Audio decoded and saved!",
-                Toast.LENGTH_LONG
-            ).show()
-
-            reload()
-
-            Toast.makeText(
-                context,
-                "Imported ${importedTake.name}",
-                Toast.LENGTH_LONG
-            ).show()
-
-        } catch (error: Exception) {
-            reportError(error)
-
-        } finally {
-            importingAudio = false
         }
-    }
-}
 
     fun requestRecording(trackId: String) {
         val granted = ContextCompat.checkSelfPermission(
@@ -539,11 +536,7 @@ if (uri != null && trackId != null) {
             }
         )
     }
-
-    @Suppress("UNUSED_EXPRESSION")
-    refresh
 }
-
 @Composable
 private fun StudioScreen(
     project: StudioProject,
@@ -577,8 +570,7 @@ private fun StudioScreen(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = Modifier.fillMaxSize()
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),

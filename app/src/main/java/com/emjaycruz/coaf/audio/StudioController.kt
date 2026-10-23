@@ -1,6 +1,7 @@
 package com.emjaycruz.coaf.audio
 
 import android.content.Context
+import android.net.Uri
 import com.emjaycruz.coaf.model.RecordingTake
 import com.emjaycruz.coaf.model.StudioProject
 import com.emjaycruz.coaf.model.StudioTrack
@@ -11,252 +12,373 @@ import java.util.UUID
 
 class StudioController(context: Context) {
 
-private val appContext = context.applicationContext
+    private val appContext = context.applicationContext
 
-private val recordingsDirectory = File(
-    appContext.filesDir,
-    "coaf_recordings"
-).apply {
-    mkdirs()
-}
-
-private val recorder = AudioRecorder(recordingsDirectory)
-private val playbackEngine = AudioPlaybackEngine()
-private val projectStore = ProjectStore(appContext)
-
-@Volatile
-var currentProject: StudioProject? = null
-    private set
-
-@Volatile
-var activeRecordingTrackId: String? = null
-    private set
-
-fun createProject(name: String): StudioProject {
-    require(name.isNotBlank()) {
-        "Project name cannot be empty."
+    private val recordingsDirectory = File(
+        appContext.filesDir,
+        "coaf_recordings"
+    ).apply {
+        mkdirs()
     }
 
-    val project = StudioProject(
-        id = UUID.randomUUID().toString(),
-        name = name.trim()
-    )
+    private val recorder = AudioRecorder(recordingsDirectory)
+    private val playbackEngine = AudioPlaybackEngine()
+    private val projectStore = ProjectStore(appContext)
 
-    projectStore.saveProject(project)
-    currentProject = project
+    @Volatile
+    var currentProject: StudioProject? = null
+        private set
 
-    return project
-}
+    @Volatile
+    var activeRecordingTrackId: String? = null
+        private set
 
-fun openProject(projectId: String): StudioProject {
-    check(recorder.state == AudioRecorder.State.IDLE) {
-        "Stop recording before opening another project."
-    }
-
-    check(!playbackEngine.isPlaying()) {
-        "Stop playback before opening another project."
-    }
-
-    val project = requireNotNull(
-        projectStore.loadProject(projectId)
-    ) {
-        "Project could not be found."
-    }
-
-    currentProject = project
-    return project
-}
-
-fun getSavedProjects(): List<StudioProject> {
-    return projectStore.listProjects()
-}
-
-fun addTrack(
-    name: String,
-    type: TrackType
-): StudioTrack {
-    require(name.isNotBlank()) {
-        "Track name cannot be empty."
-    }
-
-    val project = requireNotNull(currentProject) {
-        "Open or create a project first."
-    }
-
-    val track = StudioTrack(
-        id = UUID.randomUUID().toString(),
-        name = name.trim(),
-        type = type
-    )
-
-    updateProject(
-        project.copy(tracks = project.tracks + track)
-    )
-
-    return track
-}
-
-fun renameTrack(trackId: String, newName: String) {
-    require(newName.isNotBlank()) {
-        "Track name cannot be empty."
-    }
-
-    val project = requireNotNull(currentProject)
-
-    val tracks = project.tracks.map { track ->
-        if (track.id == trackId) {
-            track.copy(name = newName.trim())
-        } else {
-            track
+    fun createProject(name: String): StudioProject {
+        require(name.isNotBlank()) {
+            "Project name cannot be empty."
         }
+
+        val project = StudioProject(
+            id = UUID.randomUUID().toString(),
+            name = name.trim()
+        )
+
+        projectStore.saveProject(project)
+        currentProject = project
+
+        return project
     }
 
-    updateProject(project.copy(tracks = tracks))
-}
+    fun openProject(projectId: String): StudioProject {
+        check(recorder.state == AudioRecorder.State.IDLE) {
+            "Stop recording before opening another project."
+        }
 
-fun setMute(trackId: String, muted: Boolean) {
-    updateTrack(trackId) {
-        it.copy(isMuted = muted)
-    }
-}
+        check(!playbackEngine.isPlaying()) {
+            "Stop playback before opening another project."
+        }
 
-fun setSolo(trackId: String, solo: Boolean) {
-    updateTrack(trackId) {
-        it.copy(isSolo = solo)
-    }
-}
+        val project = requireNotNull(
+            projectStore.loadProject(projectId)
+        ) {
+            "Project could not be found."
+        }
 
-fun setVolume(trackId: String, volume: Float) {
-    updateTrack(trackId) {
-        it.copy(volume = volume.coerceIn(0f, 1f))
-    }
-}
-
-fun setPan(trackId: String, pan: Float) {
-    updateTrack(trackId) {
-        it.copy(pan = pan.coerceIn(-1f, 1f))
-    }
-}
-
-fun startRecording(trackId: String): File {
-    check(activeRecordingTrackId == null) {
-        "A recording is already active."
+        currentProject = project
+        return project
     }
 
-    val project = requireNotNull(currentProject) {
-        "Open or create a project first."
+    fun getSavedProjects(): List<StudioProject> {
+        return projectStore.listProjects()
     }
 
-    require(project.tracks.any { it.id == trackId }) {
-        "Recording track not found."
+    fun addTrack(
+        name: String,
+        type: TrackType
+    ): StudioTrack {
+        require(name.isNotBlank()) {
+            "Track name cannot be empty."
+        }
+
+        val project = requireNotNull(currentProject) {
+            "Open or create a project first."
+        }
+
+        val track = StudioTrack(
+            id = UUID.randomUUID().toString(),
+            name = name.trim(),
+            type = type
+        )
+
+        updateProject(
+            project.copy(tracks = project.tracks + track)
+        )
+
+        return track
     }
 
-    val file = recorder.start()
-    activeRecordingTrackId = trackId
+    fun renameTrack(trackId: String, newName: String) {
+        require(newName.isNotBlank()) {
+            "Track name cannot be empty."
+        }
 
-    return file
-}
+        val project = requireNotNull(currentProject)
 
-fun pauseRecording() {
-    recorder.pause()
-}
-
-fun resumeRecording() {
-    recorder.resume()
-}
-
-fun stopRecording(takeName: String = "Take"): RecordingTake {
-    val trackId = requireNotNull(activeRecordingTrackId) {
-        "No recording track is active."
-    }
-
-    val file = recorder.stop()
-
-    val take = RecordingTake(
-        id = UUID.randomUUID().toString(),
-        name = takeName,
-        audioPath = file.absolutePath
-    )
-
-    updateTrack(trackId) { track ->
-        track.copy(recordings = track.recordings + take)
-    }
-
-    activeRecordingTrackId = null
-
-    return take
-}
-
-fun playProject() {
-    check(activeRecordingTrackId == null) {
-        "Stop recording before playback."
-    }
-
-    val project = requireNotNull(currentProject) {
-        "Open or create a project first."
-    }
-
-    val tracks = project.tracks.flatMap { track ->
-        track.recordings.mapNotNull { take ->
-            val file = File(take.audioPath)
-
-            if (!file.isFile) {
-                null
+        val tracks = project.tracks.map { track ->
+            if (track.id == trackId) {
+                track.copy(name = newName.trim())
             } else {
-                PlaybackTrack(
-                    file = file,
-                    muted = track.isMuted,
-                    solo = track.isSolo,
-                    volume = track.volume,
-                    pan = track.pan
-                )
+                track
             }
         }
+
+        updateProject(project.copy(tracks = tracks))
     }
 
-    playbackEngine.play(tracks)
-}
+    /**
+     * Copies a selected audio file into app storage and
+     * attaches it to the chosen track as a saved take.
+     *
+     * The file picker UI will call this function.
+     */
+    fun importAudio(
+        trackId: String,
+        sourceUri: Uri
+    ): RecordingTake {
+        check(activeRecordingTrackId == null) {
+            "Stop recording before importing audio."
+        }
 
-fun stopPlayback() {
-    playbackEngine.stop()
-}
+        check(!playbackEngine.isPlaying()) {
+            "Stop playback before importing audio."
+        }
 
-fun deleteProject(projectId: String): Boolean {
-    check(currentProject?.id != projectId) {
-        "Close the current project before deleting it."
+        val project = requireNotNull(currentProject) {
+            "Open or create a project first."
+        }
+
+        val track = requireNotNull(
+            project.tracks.find { it.id == trackId }
+        ) {
+            "Import track not found."
+        }
+
+        val displayName = appContext.contentResolver
+            .query(
+                sourceUri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val column = cursor.getColumnIndex(
+                        android.provider.OpenableColumns.DISPLAY_NAME
+                    )
+
+                    if (column >= 0) cursor.getString(column) else null
+                } else {
+                    null
+                }
+            }
+            ?.takeIf { it.isNotBlank() }
+            ?: "Imported_Audio"
+
+        val safeName = displayName
+            .substringAfterLast('/')
+            .replace(Regex("[^A-Za-z0-9._ -]"), "_")
+            .take(100)
+
+        val extension = safeName
+            .substringAfterLast('.', "")
+            .lowercase()
+
+        require(extension in setOf("wav", "mp3", "m4a", "aac", "ogg", "flac")) {
+            "Unsupported file extension. Choose WAV, MP3, M4A, AAC, OGG or FLAC."
+        }
+
+        val projectDirectory = File(
+            recordingsDirectory,
+            project.id
+        ).apply {
+            mkdirs()
+        }
+
+        val destination = File(
+            projectDirectory,
+            "${UUID.randomUUID()}_$safeName"
+        )
+
+        try {
+            val input = requireNotNull(
+                appContext.contentResolver.openInputStream(sourceUri)
+            ) {
+                "Could not open the selected audio file."
+            }
+
+            input.use { source ->
+                destination.outputStream().use { output ->
+                    source.copyTo(output)
+                }
+            }
+
+            require(destination.length() > 0L) {
+                "The selected audio file is empty."
+            }
+
+            val take = RecordingTake(
+                id = UUID.randomUUID().toString(),
+                name = safeName.substringBeforeLast(
+                    ".",
+                    safeName
+                ),
+                audioPath = destination.absolutePath
+            )
+
+            val updatedTrack = track.copy(
+                recordings = track.recordings + take
+            )
+
+            val updatedTracks = project.tracks.map {
+                if (it.id == trackId) updatedTrack else it
+            }
+
+            updateProject(
+                project.copy(tracks = updatedTracks)
+            )
+
+            return take
+        } catch (error: Exception) {
+            destination.delete()
+            throw error
+        }
     }
 
-    return projectStore.deleteProject(projectId)
-}
-
-private fun updateTrack(
-    trackId: String,
-    transform: (StudioTrack) -> StudioTrack
-) {
-    val project = requireNotNull(currentProject) {
-        "No project is open."
+    fun setMute(trackId: String, muted: Boolean) {
+        updateTrack(trackId) {
+            it.copy(isMuted = muted)
+        }
     }
 
-    val found = project.tracks.any { it.id == trackId }
-
-    require(found) {
-        "Track not found."
+    fun setSolo(trackId: String, solo: Boolean) {
+        updateTrack(trackId) {
+            it.copy(isSolo = solo)
+        }
     }
 
-    val updatedTracks = project.tracks.map { track ->
-        if (track.id == trackId) transform(track) else track
+    fun setVolume(trackId: String, volume: Float) {
+        updateTrack(trackId) {
+            it.copy(volume = volume.coerceIn(0f, 1f))
+        }
     }
 
-    updateProject(project.copy(tracks = updatedTracks))
-}
+    fun setPan(trackId: String, pan: Float) {
+        updateTrack(trackId) {
+            it.copy(pan = pan.coerceIn(-1f, 1f))
+        }
+    }
 
-private fun updateProject(project: StudioProject) {
-    val updated = project.copy(
-        updatedAt = System.currentTimeMillis()
-    )
+    fun startRecording(trackId: String): File {
+        check(activeRecordingTrackId == null) {
+            "A recording is already active."
+        }
 
-    projectStore.saveProject(updated)
-    currentProject = updated
-}
+        val project = requireNotNull(currentProject) {
+            "Open or create a project first."
+        }
 
+        require(project.tracks.any { it.id == trackId }) {
+            "Recording track not found."
+        }
+
+        check(!playbackEngine.isPlaying()) {
+            "Stop playback before recording."
+        }
+
+        val file = recorder.start()
+        activeRecordingTrackId = trackId
+
+        return file
+    }
+
+    fun pauseRecording() {
+        recorder.pause()
+    }
+
+    fun resumeRecording() {
+        recorder.resume()
+    }
+
+    fun stopRecording(takeName: String = "Take"): RecordingTake {
+        val trackId = requireNotNull(activeRecordingTrackId) {
+            "No recording track is active."
+        }
+
+        val file = recorder.stop()
+
+        val take = RecordingTake(
+            id = UUID.randomUUID().toString(),
+            name = takeName,
+            audioPath = file.absolutePath
+        )
+
+        updateTrack(trackId) { track ->
+            track.copy(recordings = track.recordings + take)
+        }
+
+        activeRecordingTrackId = null
+
+        return take
+    }
+
+    fun playProject() {
+        check(activeRecordingTrackId == null) {
+            "Stop recording before playback."
+        }
+
+        val project = requireNotNull(currentProject) {
+            "Open or create a project first."
+        }
+
+        val tracks = project.tracks.flatMap { track ->
+            track.recordings.mapNotNull { take ->
+                val file = File(take.audioPath)
+
+                if (!file.isFile) {
+                    null
+                } else {
+                    PlaybackTrack(
+                        file = file,
+                        muted = track.isMuted,
+                        solo = track.isSolo,
+                        volume = track.volume,
+                        pan = track.pan
+                    )
+                }
+            }
+        }
+
+        playbackEngine.play(tracks)
+    }
+
+    fun stopPlayback() {
+        playbackEngine.stop()
+    }
+
+    fun deleteProject(projectId: String): Boolean {
+        check(currentProject?.id != projectId) {
+            "Close the current project before deleting it."
+        }
+
+        return projectStore.deleteProject(projectId)
+    }
+
+    private fun updateTrack(
+        trackId: String,
+        transform: (StudioTrack) -> StudioTrack
+    ) {
+        val project = requireNotNull(currentProject) {
+            "No project is open."
+        }
+
+        require(project.tracks.any { it.id == trackId }) {
+            "Track not found."
+        }
+
+        val updatedTracks = project.tracks.map { track ->
+            if (track.id == trackId) transform(track) else track
+        }
+
+        updateProject(project.copy(tracks = updatedTracks))
+    }
+
+    private fun updateProject(project: StudioProject) {
+        val updated = project.copy(
+            updatedAt = System.currentTimeMillis()
+        )
+
+        projectStore.saveProject(updated)
+        currentProject = updated
+    }
 }

@@ -171,30 +171,43 @@ private fun CoafApp() {
             val trackId = pendingImportTrackId
             pendingImportTrackId = null
 
-            if (uri != null && trackId != null) {
-                scope.launch {
-                    importingAudio = true
+if (uri != null && trackId != null) {
+    scope.launch {
+        importingAudio = true
 
-                    try {
-                        val importedTake = withContext(Dispatchers.IO) {
-                            controller.importAudio(trackId, uri)
-                        }
+        try {
+            Toast.makeText(
+                context,
+                "Starting audio import...",
+                Toast.LENGTH_SHORT
+            ).show()
 
-                        reload()
-
-                        Toast.makeText(
-                            context,
-                            "Imported ${importedTake.name}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    } catch (error: Exception) {
-                        reportError(error)
-                    } finally {
-                        importingAudio = false
-                    }
-                }
+            val importedTake = withContext(Dispatchers.IO) {
+                controller.importAudio(trackId, uri)
             }
+
+            Toast.makeText(
+                context,
+                "Audio decoded and saved!",
+                Toast.LENGTH_LONG
+            ).show()
+
+            reload()
+
+            Toast.makeText(
+                context,
+                "Imported ${importedTake.name}",
+                Toast.LENGTH_LONG
+            ).show()
+
+        } catch (error: Exception) {
+            reportError(error)
+
+        } finally {
+            importingAudio = false
         }
+    }
+}
 
     fun requestRecording(trackId: String) {
         val granted = ContextCompat.checkSelfPermission(

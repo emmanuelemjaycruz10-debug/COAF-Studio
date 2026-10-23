@@ -543,6 +543,7 @@ if (uri != null && trackId != null) {
     @Suppress("UNUSED_EXPRESSION")
     refresh
 }
+
 @Composable
 private fun StudioScreen(
     project: StudioProject,

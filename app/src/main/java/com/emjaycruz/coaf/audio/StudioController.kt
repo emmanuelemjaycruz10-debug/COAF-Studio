@@ -2,6 +2,7 @@ package com.emjaycruz.coaf.audio
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import com.emjaycruz.coaf.model.RecordingTake
 import com.emjaycruz.coaf.model.StudioProject
 import com.emjaycruz.coaf.model.StudioTrack
@@ -23,6 +24,7 @@ class StudioController(context: Context) {
 
     private val recorder = AudioRecorder(recordingsDirectory)
     private val playbackEngine = AudioPlaybackEngine()
+    private val audioDecoder = AudioDecoder(appContext)
     private val projectStore = ProjectStore(appContext)
 
     @Volatile
@@ -116,10 +118,11 @@ class StudioController(context: Context) {
     }
 
     /**
-     * Copies a selected audio file into app storage and
-     * attaches it to the chosen track as a saved take.
+     * Imports supported audio through Android's media decoder.
      *
-     * The file picker UI will call this function.
+     * The decoder creates a normalized WAV file in app storage.
+     * The saved project references that WAV file so the existing
+     * WAV playback engine can read it.
      */
     fun importAudio(
         trackId: String,
@@ -146,7 +149,7 @@ class StudioController(context: Context) {
         val displayName = appContext.contentResolver
             .query(
                 sourceUri,
-                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                arrayOf(OpenableColumns.DISPLAY_NAME),
                 null,
                 null,
                 null
@@ -154,7 +157,7 @@ class StudioController(context: Context) {
             ?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val column = cursor.getColumnIndex(
-                        android.provider.OpenableColumns.DISPLAY_NAME
+                        OpenableColumns.DISPLAY_NAME
                     )
 
                     if (column >= 0) cursor.getString(column) else null
@@ -174,7 +177,11 @@ class StudioController(context: Context) {
             .substringAfterLast('.', "")
             .lowercase()
 
-        require(extension in setOf("wav", "mp3", "m4a", "aac", "ogg", "flac")) {
+        require(
+            extension in setOf(
+                "wav", "mp3", "m4a", "aac", "ogg", "flac"
+            )
+        ) {
             "Unsupported file extension. Choose WAV, MP3, M4A, AAC, OGG or FLAC."
         }
 
@@ -185,34 +192,33 @@ class StudioController(context: Context) {
             mkdirs()
         }
 
+        val baseName = safeName.substringBeforeLast(
+            ".",
+            safeName
+        ).ifBlank {
+            "Imported_Audio"
+        }
+
         val destination = File(
             projectDirectory,
-            "${UUID.randomUUID()}_$safeName"
+            "${UUID.randomUUID()}_${baseName}.wav"
         )
 
         try {
-            val input = requireNotNull(
-                appContext.contentResolver.openInputStream(sourceUri)
-            ) {
-                "Could not open the selected audio file."
-            }
+            // Decode the original selected URI directly into a WAV.
+            // The original source file is not modified.
+            audioDecoder.decodeToWav(
+                source = sourceUri,
+                output = destination
+            )
 
-            input.use { source ->
-                destination.outputStream().use { output ->
-                    source.copyTo(output)
-                }
-            }
-
-            require(destination.length() > 0L) {
-                "The selected audio file is empty."
+            require(destination.isFile && destination.length() > 44L) {
+                "Audio conversion did not produce a valid WAV file."
             }
 
             val take = RecordingTake(
                 id = UUID.randomUUID().toString(),
-                name = safeName.substringBeforeLast(
-                    ".",
-                    safeName
-                ),
+                name = baseName,
                 audioPath = destination.absolutePath
             )
 
@@ -220,8 +226,12 @@ class StudioController(context: Context) {
                 recordings = track.recordings + take
             )
 
-            val updatedTracks = project.tracks.map {
-                if (it.id == trackId) updatedTrack else it
+            val updatedTracks = project.tracks.map { existingTrack ->
+                if (existingTrack.id == trackId) {
+                    updatedTrack
+                } else {
+                    existingTrack
+                }
             }
 
             updateProject(
@@ -231,7 +241,12 @@ class StudioController(context: Context) {
             return take
         } catch (error: Exception) {
             destination.delete()
-            throw error
+
+            throw IllegalStateException(
+                "Could not import ${safeName}: " +
+                    (error.message ?: "Unknown audio conversion error"),
+                error
+            )
         }
     }
 

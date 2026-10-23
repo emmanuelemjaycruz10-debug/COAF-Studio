@@ -2,6 +2,7 @@ package com.emjaycruz.coaf
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -37,8 +38,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.statusBarColor = android.graphics.Color.rgb(16, 16, 20)
-        window.navigationBarColor = android.graphics.Color.rgb(16, 16, 20)
+        window.statusBarColor =
+            android.graphics.Color.rgb(16, 16, 20)
+
+        window.navigationBarColor =
+            android.graphics.Color.rgb(16, 16, 20)
 
         setContent {
             MaterialTheme(
@@ -95,6 +99,10 @@ private fun CoafApp() {
         mutableStateOf<String?>(null)
     }
 
+    var pendingImportTrackId by remember {
+        mutableStateOf<String?>(null)
+    }
+
     var refresh by remember {
         mutableIntStateOf(0)
     }
@@ -148,6 +156,33 @@ private fun CoafApp() {
             }
         }
 
+    val audioPicker =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument()
+        ) { uri: Uri? ->
+            val trackId = pendingImportTrackId
+            pendingImportTrackId = null
+
+            if (uri != null && trackId != null) {
+                try {
+                    val importedTake = controller.importAudio(
+                        trackId,
+                        uri
+                    )
+
+                    reload()
+
+                    Toast.makeText(
+                        context,
+                        "Imported ${importedTake.name}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } catch (error: Exception) {
+                    reportError(error)
+                }
+            }
+        }
+
     fun requestRecording(trackId: String) {
         val granted = ContextCompat.checkSelfPermission(
             context,
@@ -158,10 +193,28 @@ private fun CoafApp() {
             startRecording(trackId)
         } else {
             pendingTrackId = trackId
+
             microphonePermission.launch(
                 Manifest.permission.RECORD_AUDIO
             )
         }
+    }
+
+    fun requestAudioImport(trackId: String) {
+        if (recordingTrackId != null || playbackActive) {
+            Toast.makeText(
+                context,
+                "Stop recording or playback before importing audio.",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        pendingImportTrackId = trackId
+
+        audioPicker.launch(
+            arrayOf("audio/*")
+        )
     }
 
     Surface(
@@ -275,6 +328,7 @@ private fun CoafApp() {
                     recordingTrackId = recordingTrackId,
                     recordingPaused = recordingPaused,
                     playbackActive = playbackActive,
+
                     onBack = {
                         if (
                             recordingTrackId == null &&
@@ -290,6 +344,7 @@ private fun CoafApp() {
                             ).show()
                         }
                     },
+
                     onAddTrack = { name, type ->
                         try {
                             controller.addTrack(name, type)
@@ -298,9 +353,15 @@ private fun CoafApp() {
                             reportError(error)
                         }
                     },
+
+                    onImportAudio = { trackId ->
+                        requestAudioImport(trackId)
+                    },
+
                     onRecord = { trackId ->
                         requestRecording(trackId)
                     },
+
                     onPauseResume = {
                         try {
                             if (recordingPaused) {
@@ -308,16 +369,20 @@ private fun CoafApp() {
                             } else {
                                 controller.pauseRecording()
                             }
+
                             recordingPaused = !recordingPaused
                         } catch (error: Exception) {
                             reportError(error)
                         }
                     },
+
                     onStopRecording = {
                         try {
                             val take = controller.stopRecording()
+
                             recordingTrackId = null
                             recordingPaused = false
+
                             reload()
 
                             Toast.makeText(
@@ -329,6 +394,7 @@ private fun CoafApp() {
                             reportError(error)
                         }
                     },
+
                     onPlay = {
                         try {
                             controller.playProject()
@@ -337,6 +403,7 @@ private fun CoafApp() {
                             reportError(error)
                         }
                     },
+
                     onStopPlayback = {
                         try {
                             controller.stopPlayback()
@@ -345,6 +412,7 @@ private fun CoafApp() {
                             reportError(error)
                         }
                     },
+
                     onMute = { track ->
                         try {
                             controller.setMute(
@@ -356,6 +424,7 @@ private fun CoafApp() {
                             reportError(error)
                         }
                     },
+
                     onSolo = { track ->
                         try {
                             controller.setSolo(
@@ -367,9 +436,13 @@ private fun CoafApp() {
                             reportError(error)
                         }
                     },
+
                     onVolume = { track, value ->
                         try {
-                            controller.setVolume(track.id, value)
+                            controller.setVolume(
+                                track.id,
+                                value
+                            )
                             reload()
                         } catch (error: Exception) {
                             reportError(error)
@@ -408,6 +481,7 @@ private fun CoafApp() {
                                 controller.createProject(
                                     newProjectName.trim()
                                 )
+
                                 showCreateDialog = false
                                 reload()
                             } catch (error: Exception) {
@@ -443,6 +517,7 @@ private fun StudioScreen(
     playbackActive: Boolean,
     onBack: () -> Unit,
     onAddTrack: (String, TrackType) -> Unit,
+    onImportAudio: (String) -> Unit,
     onRecord: (String) -> Unit,
     onPauseResume: () -> Unit,
     onStopRecording: () -> Unit,
@@ -458,6 +533,10 @@ private fun StudioScreen(
 
     var customTrackName by remember {
         mutableStateOf("")
+    }
+
+    var menuExpanded by remember {
+        mutableStateOf(false)
     }
 
     Column(
@@ -586,10 +665,6 @@ private fun StudioScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        var menuExpanded by remember {
-            mutableStateOf(false)
-        }
-
         Box {
             OutlinedButton(
                 onClick = {
@@ -692,6 +767,9 @@ private fun StudioScreen(
                         onRecord = {
                             onRecord(track.id)
                         },
+                        onImportAudio = {
+                            onImportAudio(track.id)
+                        },
                         onMute = {
                             onMute(track)
                         },
@@ -715,6 +793,7 @@ private fun TrackCard(
     recordingPaused: Boolean,
     canRecord: Boolean,
     onRecord: () -> Unit,
+    onImportAudio: () -> Unit,
     onMute: () -> Unit,
     onSolo: () -> Unit,
     onVolume: (Float) -> Unit
@@ -768,6 +847,16 @@ private fun TrackCard(
                 },
                 fontWeight = FontWeight.Bold
             )
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            onClick = onImportAudio,
+            enabled = canRecord && !recording,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("＋ Import Audio / Beat")
         }
 
         Spacer(Modifier.height(8.dp))

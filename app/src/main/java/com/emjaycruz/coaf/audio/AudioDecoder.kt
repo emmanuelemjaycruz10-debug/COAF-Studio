@@ -341,115 +341,135 @@ class AudioDecoder(context: Context) {
         }
     }
 
-    private fun convertToTargetFormat(
-        rawFile: File,
-        outputRaw: File,
-        sourceRate: Int,
-        sourceChannels: Int
-    ) {
-        require(sourceRate in 8000..192000) {
-            "Unsupported source sample rate."
-        }
+private fun convertToTargetFormat(
+    rawFile: File,
+    outputRaw: File,
+    sourceRate: Int,
+    sourceChannels: Int
+) {
+    require(sourceRate in 8000..192000) {
+        "Unsupported source sample rate."
+    }
 
-        val bytesPerFrame = sourceChannels * 2
-        val sourceFrames = rawFile.length() / bytesPerFrame
+    require(sourceChannels in 1..2) {
+        "Only mono and stereo audio are supported."
+    }
 
-        require(sourceFrames > 0L) {
-            "Audio contains no complete frames."
-        }
+    val bytesPerFrame = sourceChannels * 2
+    val sourceFrames = rawFile.length() / bytesPerFrame
 
-        val targetFrames = (
-            sourceFrames.toDouble() * TARGET_RATE / sourceRate
-        ).roundToInt().coerceAtLeast(1)
+    require(sourceFrames > 0L) {
+        "Audio contains no complete frames."
+    }
 
-        val targetBytes = targetFrames.toLong() * TARGET_CHANNELS * 2
+    val targetFrames = (
+        sourceFrames.toDouble() * TARGET_RATE / sourceRate
+    ).roundToInt().coerceAtLeast(1)
 
-        require(targetBytes <= MAX_OUTPUT_BYTES) {
-            "Converted audio is too large."
-        }
+    val targetBytes = targetFrames.toLong() * TARGET_CHANNELS * 2
 
-        RandomAccessFile(rawFile, "r").use { input ->
-            BufferedOutputStream(
-                FileOutputStream(outputRaw),
-                64 * 1024
-            ).use { output ->
+    require(targetBytes <= MAX_OUTPUT_BYTES) {
+        "Converted audio is too large."
+    }
 
-                val frameBuffer = ByteArray(bytesPerFrame)
-                val leftRight = ShortArray(4)
-                val outputBuffer = ByteBuffer
-                    .allocate(64 * 1024)
-                    .order(ByteOrder.LITTLE_ENDIAN)
+    RandomAccessFile(rawFile, "r").use { input ->
+        BufferedOutputStream(
+            FileOutputStream(outputRaw),
+            64 * 1024
+        ).use { output ->
 
-                fun readFrame(frame: Long, target: Int) {
-                    val safeFrame = frame.coerceIn(
-                        0L,
-                        sourceFrames - 1L
-                    )
+            val frameBytes = ByteArray(bytesPerFrame)
 
-                    input.seek(safeFrame * bytesPerFrame)
-                    input.readFully(frameBuffer)
+            fun readFrame(): Pair<Short, Short> {
+                input.readFully(frameBytes)
 
-                    val left = ByteBuffer.wrap(frameBuffer)
-                        .order(ByteOrder.LITTLE_ENDIAN)
-                        .short
+                val left = (
+                    (frameBytes[0].toInt() and 0xFF) or
+                    ((frameBytes[1].toInt() and 0xFF) shl 8)
+                ).toShort()
 
-                    val right = if (sourceChannels == 1) {
-                        left
-                    } else {
-                        ByteBuffer.wrap(frameBuffer, 2, 2)
-                            .order(ByteOrder.LITTLE_ENDIAN)
-                            .short
-                    }
-
-                    leftRight[target] = left
-                    leftRight[target + 1] = right
+                val right = if (sourceChannels == 1) {
+                    left
+                } else {
+                    (
+                        (frameBytes[2].toInt() and 0xFF) or
+                        ((frameBytes[3].toInt() and 0xFF) shl 8)
+                    ).toShort()
                 }
 
-                for (frame in 0 until targetFrames) {
-                    val sourcePosition =
-                        frame.toDouble() * sourceRate / TARGET_RATE
+                return left to right
+            }
 
-                    val leftFrame = floor(sourcePosition).toLong()
-                    val nextFrame = (leftFrame + 1)
-                        .coerceAtMost(sourceFrames - 1L)
+            var current = readFrame()
+            var next = if (sourceFrames > 1L) {
+                readFrame()
+            } else {
+                current
+            }
 
-                    val fraction =
-                        (sourcePosition - leftFrame).toFloat()
+            var currentIndex = 0L
+            var nextIndex = if (sourceFrames > 1L) 1L else 0L
 
-                    readFrame(leftFrame, 0)
-                    readFrame(nextFrame, 2)
+            val outputBuffer = ByteBuffer
+                .allocate(64 * 1024)
+                .order(ByteOrder.LITTLE_ENDIAN)
 
-                    for (channel in 0..1) {
-                        val first = leftRight[channel].toFloat()
-                        val second = leftRight[channel + 2].toFloat()
-
-                        val sample = (
-                            first + (second - first) * fraction
-                        ).roundToInt().coerceIn(-32768, 32767)
-
-                        if (outputBuffer.remaining() < 2) {
-                            output.write(
-                                outputBuffer.array(),
-                                0,
-                                outputBuffer.position()
-                            )
-                            outputBuffer.clear()
-                        }
-
-                        outputBuffer.putShort(sample.toShort())
-                    }
-                }
-
+            fun flushBuffer() {
                 if (outputBuffer.position() > 0) {
                     output.write(
                         outputBuffer.array(),
                         0,
                         outputBuffer.position()
                     )
+                    outputBuffer.clear()
                 }
             }
+
+            for (frame in 0 until targetFrames) {
+                val position =
+                    frame.toDouble() * sourceRate / TARGET_RATE
+
+                val leftIndex = floor(position)
+                    .toLong()
+                    .coerceAtMost(sourceFrames - 1L)
+
+                while (currentIndex < leftIndex) {
+                    current = next
+                    currentIndex = nextIndex
+
+                    if (currentIndex < sourceFrames - 1L) {
+                        next = readFrame()
+                        nextIndex = currentIndex + 1L
+                    } else {
+                        next = current
+                        nextIndex = currentIndex
+                    }
+                }
+
+                val fraction = (position - floor(position)).toFloat()
+
+                val left = (
+                    current.first +
+                    (next.first - current.first) * fraction
+                ).roundToInt().coerceIn(-32768, 32767)
+
+                val right = (
+                    current.second +
+                    (next.second - current.second) * fraction
+                ).roundToInt().coerceIn(-32768, 32767)
+
+                if (outputBuffer.remaining() < 4) {
+                    flushBuffer()
+                }
+
+                outputBuffer.putShort(left.toShort())
+                outputBuffer.putShort(right.toShort())
+            }
+
+            flushBuffer()
         }
     }
+}
 
     private fun writeWav(output: File, pcmFile: File) {
         val dataSize = pcmFile.length()

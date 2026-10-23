@@ -7,30 +7,36 @@ import android.media.MediaFormat
 import android.net.Uri
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.channels.FileChannel
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.floor
+import kotlin.math.roundToInt
 
 class AudioDecoder(context: Context) {
 
     private val appContext = context.applicationContext
 
-    /**
-     * Decodes a supported audio URI into a PCM WAV file.
-     *
-     * Output format:
-     * - 44,100 Hz
-     * - Mono
-     * - 16-bit PCM
-     *
-     * Returns the WAV file, or throws an exception if decoding fails.
-     */
+    companion object {
+        private const val TARGET_RATE = 44100
+        private const val TARGET_CHANNELS = 2
+        private const val TARGET_BITS = 16
+        private const val MAX_OUTPUT_BYTES = 1_500_000_000L
+    }
+
     fun decodeToWav(source: Uri, output: File): File {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
 
+        val rawFile = File(output.parentFile, "${output.name}.raw")
+        val convertedFile = File(output.parentFile, "${output.name}.converted")
+
         try {
+            output.parentFile?.mkdirs()
+            require(output.parentFile?.exists() == true) {
+                "Cannot create audio output directory."
+            }
+
             extractor.setDataSource(appContext, source, null)
 
             var selectedTrack = -1
@@ -48,39 +54,50 @@ class AudioDecoder(context: Context) {
             }
 
             require(selectedTrack >= 0 && inputFormat != null) {
-                "No supported audio track was found."
+                "No audio track was found."
             }
 
             extractor.selectTrack(selectedTrack)
 
             val mime = inputFormat.getString(MediaFormat.KEY_MIME)
-                ?: error("Audio format is unknown.")
+                ?: error("Unknown audio format.")
 
             codec = MediaCodec.createDecoderByType(mime)
             codec.configure(inputFormat, null, null, 0)
             codec.start()
 
-            output.parentFile?.mkdirs()
+            var sourceRate = inputFormat.getInteger(
+                MediaFormat.KEY_SAMPLE_RATE
+            )
 
-            val temporaryPcm = File(output.parentFile, "${output.name}.pcm")
+            var sourceChannels = inputFormat.getInteger(
+                MediaFormat.KEY_CHANNEL_COUNT
+            )
+
+            var pcmEncoding = 2 // PCM 16-bit is the usual decoder output.
+
+            var inputDone = false
+            var outputDone = false
             var totalBytes = 0L
-            var outputSampleRate = 44100
-            var outputChannels = 1
 
-            FileOutputStream(temporaryPcm).use { stream ->
-                val bufferInfo = MediaCodec.BufferInfo()
-                var inputDone = false
-                var outputDone = false
+            FileOutputStream(rawFile).use { stream ->
+                val info = MediaCodec.BufferInfo()
 
                 while (!outputDone) {
+
                     if (!inputDone) {
                         val inputIndex = codec.dequeueInputBuffer(10_000)
 
                         if (inputIndex >= 0) {
                             val inputBuffer = codec.getInputBuffer(inputIndex)
-                                ?: error("Could not access decoder input buffer.")
+                                ?: error("Cannot access decoder input buffer.")
 
-                            val sampleSize = extractor.readSampleData(inputBuffer, 0)
+                            inputBuffer.clear()
+
+                            val sampleSize = extractor.readSampleData(
+                                inputBuffer,
+                                0
+                            )
 
                             if (sampleSize < 0) {
                                 codec.queueInputBuffer(
@@ -104,73 +121,93 @@ class AudioDecoder(context: Context) {
                         }
                     }
 
-                    when (val outputIndex =
-                        codec.dequeueOutputBuffer(bufferInfo, 10_000)) {
-
+                    when (
+                        val index = codec.dequeueOutputBuffer(info, 10_000)
+                    ) {
                         MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             val format = codec.outputFormat
-                            outputSampleRate = format.getInteger(
+
+                            sourceRate = format.getInteger(
                                 MediaFormat.KEY_SAMPLE_RATE
                             )
-                            outputChannels = format.getInteger(
+
+                            sourceChannels = format.getInteger(
                                 MediaFormat.KEY_CHANNEL_COUNT
+                            )
+
+                            pcmEncoding = format.getInteger(
+                                MediaFormat.KEY_PCM_ENCODING,
+                                2
                             )
                         }
 
                         MediaCodec.INFO_TRY_AGAIN_LATER -> {
-                            // Wait for the next decoder output.
+                            // Wait for more decoded audio.
                         }
 
-                        else -> if (outputIndex >= 0) {
-                            val buffer = codec.getOutputBuffer(outputIndex)
+                        else -> if (index >= 0) {
+                            val buffer = codec.getOutputBuffer(index)
 
-                            if (buffer != null && bufferInfo.size > 0) {
-                                buffer.position(bufferInfo.offset)
-                                buffer.limit(bufferInfo.offset + bufferInfo.size)
+                            if (buffer != null && info.size > 0) {
+                                buffer.position(info.offset)
+                                buffer.limit(info.offset + info.size)
 
-                                val bytes = ByteArray(buffer.remaining())
-                                buffer.get(bytes)
-                                stream.write(bytes)
-                                totalBytes += bytes.size
+                                val samples = decodeSamples(
+                                    buffer.slice(),
+                                    pcmEncoding
+                                )
+
+                                val bytes = ByteBuffer
+                                    .allocate(samples.size * 2)
+                                    .order(ByteOrder.LITTLE_ENDIAN)
+
+                                samples.forEach { bytes.putShort(it) }
+
+                                stream.write(bytes.array())
+                                totalBytes += bytes.capacity()
+
+                                require(totalBytes <= MAX_OUTPUT_BYTES) {
+                                    "Audio is too large to convert safely."
+                                }
                             }
 
                             outputDone =
-                                bufferInfo.flags and
+                                info.flags and
                                     MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
 
-                            codec.releaseOutputBuffer(outputIndex, false)
+                            codec.releaseOutputBuffer(index, false)
                         }
                     }
                 }
             }
 
             require(totalBytes > 0L) {
-                "The decoder returned no audio samples."
+                "No audio samples were decoded."
             }
 
-            /*
-             * This initial decoder accepts PCM output only when it is already
-             * mono, 16-bit, 44.1 kHz. Resampling and channel conversion will
-             * be handled in the next integration step.
-             */
-            require(outputSampleRate == 44100 && outputChannels == 1) {
-                "Decoded audio is ${outputSampleRate}Hz, ${outputChannels} channel(s). " +
-                    "Conversion to 44.1kHz mono is required before playback."
+            require(sourceRate > 0) {
+                "Invalid audio sample rate."
             }
 
-            writeWavHeader(
-                output = output,
-                pcmData = temporaryPcm,
-                sampleRate = outputSampleRate,
-                channels = outputChannels
+            require(sourceChannels in 1..2) {
+                "Only mono and stereo audio are supported."
+            }
+
+            convertToTargetFormat(
+                rawFile = rawFile,
+                outputRaw = convertedFile,
+                sourceRate = sourceRate,
+                sourceChannels = sourceChannels
             )
 
-            temporaryPcm.delete()
+            writeWav(output, convertedFile)
+
             return output
         } catch (e: Exception) {
             output.delete()
+
             throw IllegalStateException(
-                "Audio decoding failed: ${e.message ?: "Unknown error"}",
+                "Could not decode audio: ${e.message ?: "Unknown error"}",
                 e
             )
         } finally {
@@ -184,23 +221,155 @@ class AudioDecoder(context: Context) {
             } catch (_: Exception) {
             }
 
-            extractor.release()
+            try {
+                extractor.release()
+            } catch (_: Exception) {
+            }
+
+            rawFile.delete()
+            convertedFile.delete()
         }
     }
 
-    private fun writeWavHeader(
-        output: File,
-        pcmData: File,
-        sampleRate: Int,
-        channels: Int
+    private fun decodeSamples(
+        buffer: ByteBuffer,
+        encoding: Int
+    ): ShortArray {
+        buffer.order(ByteOrder.LITTLE_ENDIAN)
+
+        return when (encoding) {
+            2 -> {
+                val count = buffer.remaining() / 2
+                ShortArray(count) { buffer.short }
+            }
+
+            3 -> {
+                val count = buffer.remaining()
+                ShortArray(count) {
+                    ((buffer.get().toInt() and 0xFF) - 128)
+                        .let { it * 256 }
+                        .toShort()
+                }
+            }
+
+            4 -> {
+                val count = buffer.remaining() / 4
+
+                ShortArray(count) {
+                    val value = buffer.float.coerceIn(-1f, 1f)
+                    (value * 32767f).roundToInt()
+                        .coerceIn(-32768, 32767)
+                        .toShort()
+                }
+            }
+
+            else -> error(
+                "Unsupported decoded PCM encoding: $encoding"
+            )
+        }
+    }
+
+    private fun convertToTargetFormat(
+        rawFile: File,
+        outputRaw: File,
+        sourceRate: Int,
+        sourceChannels: Int
     ) {
-        val dataSize = pcmData.length()
-        require(dataSize <= 0xFFFFFFFFL - 36L) {
-            "Audio file is too large for a standard WAV file."
+        val bytesPerFrame = sourceChannels * 2
+        val sourceFrames = rawFile.length() / bytesPerFrame
+
+        require(sourceFrames > 0L) {
+            "Audio contains no complete frames."
         }
 
-        FileOutputStream(output).use { fileStream ->
-            val channel = fileStream.channel
+        val targetFrames = (
+            sourceFrames.toDouble() * TARGET_RATE / sourceRate
+        ).roundToInt().coerceAtLeast(1)
+
+        val targetBytes = targetFrames.toLong() * TARGET_CHANNELS * 2
+
+        require(targetBytes <= MAX_OUTPUT_BYTES) {
+            "Converted audio is too large."
+        }
+
+        RandomAccessFile(rawFile, "r").use { input ->
+            FileOutputStream(outputRaw).use { output ->
+                val sourceBuffer = ByteArray(bytesPerFrame)
+
+                fun readSample(frame: Long, channel: Int): Short {
+                    val safeFrame = frame.coerceIn(0L, sourceFrames - 1L)
+
+                    input.seek(safeFrame * bytesPerFrame)
+
+                    input.readFully(sourceBuffer)
+
+                    val actualChannel =
+                        if (sourceChannels == 1) 0 else channel
+
+                    val offset = actualChannel * 2
+
+                    return ByteBuffer.wrap(sourceBuffer, offset, 2)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+                        .short
+                }
+
+                val outputBuffer = ByteBuffer
+                    .allocate(8192)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+
+                for (frame in 0 until targetFrames) {
+                    val sourcePosition =
+                        frame.toDouble() * sourceRate / TARGET_RATE
+
+                    val leftFrame = floor(sourcePosition).toLong()
+                    val fraction = (sourcePosition - leftFrame).toFloat()
+
+                    val nextFrame = (leftFrame + 1)
+                        .coerceAtMost(sourceFrames - 1)
+
+                    for (channel in 0 until TARGET_CHANNELS) {
+                        val first = readSample(
+                            leftFrame,
+                            channel
+                        ).toFloat()
+
+                        val second = readSample(
+                            nextFrame,
+                            channel
+                        ).toFloat()
+
+                        val sample = (
+                            first + (second - first) * fraction
+                        ).roundToInt().coerceIn(-32768, 32767)
+
+                        if (outputBuffer.remaining() < 2) {
+                            output.write(outputBuffer.array(), 0, outputBuffer.position())
+                            outputBuffer.clear()
+                        }
+
+                        outputBuffer.putShort(sample.toShort())
+                    }
+                }
+
+                if (outputBuffer.position() > 0) {
+                    output.write(
+                        outputBuffer.array(),
+                        0,
+                        outputBuffer.position()
+                    )
+                }
+            }
+        }
+    }
+
+    private fun writeWav(output: File, pcmFile: File) {
+        val dataSize = pcmFile.length()
+
+        require(dataSize > 0L && dataSize <= 0xFFFFFFFFL - 36L) {
+            "Invalid WAV output size."
+        }
+
+        FileOutputStream(output).use { stream ->
             val header = ByteBuffer.allocate(44)
                 .order(ByteOrder.LITTLE_ENDIAN)
 
@@ -210,25 +379,18 @@ class AudioDecoder(context: Context) {
             header.put("fmt ".toByteArray(Charsets.US_ASCII))
             header.putInt(16)
             header.putShort(1.toShort())
-            header.putShort(channels.toShort())
-            header.putInt(sampleRate)
-            header.putInt(sampleRate * channels * 2)
-            header.putShort((channels * 2).toShort())
-            header.putShort(16.toShort())
+            header.putShort(TARGET_CHANNELS.toShort())
+            header.putInt(TARGET_RATE)
+            header.putInt(TARGET_RATE * TARGET_CHANNELS * 2)
+            header.putShort((TARGET_CHANNELS * 2).toShort())
+            header.putShort(TARGET_BITS.toShort())
             header.put("data".toByteArray(Charsets.US_ASCII))
             header.putInt(dataSize.toInt())
-            header.flip()
 
-            channel.write(header)
+            stream.write(header.array())
 
-            FileInputStreamCompat.copy(pcmData, fileStream)
-        }
-    }
-
-    private object FileInputStreamCompat {
-        fun copy(source: File, destination: FileOutputStream) {
-            source.inputStream().use { input ->
-                input.copyTo(destination)
+            pcmFile.inputStream().use { input ->
+                input.copyTo(stream)
             }
         }
     }
